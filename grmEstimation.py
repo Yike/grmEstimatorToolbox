@@ -108,12 +108,21 @@ def estimate():
     sys.stdout = sys.__stdout__
     
     # Construct dictionary with results.
-    rslt = _distributeEvaluationValues(rslt, numCovarsOut, True)
+    rslt = _distributeEvaluationValues(rslt[0], numCovarsOut, True)
+    
+    rslt_={}
+    rslt_['Y1_beta']=rslt['Y1_beta'].tolist()
+    rslt_['Y0_beta']=rslt['Y0_beta'].tolist()
+    rslt_['D_gamma']=rslt['D_gamma'].tolist()
+    rslt_['U1V_rho']=float(rslt['U1V_rho'])
+    rslt_['U0V_rho']=float(rslt['U0V_rho'])
+    rslt_['U1_var']=float(rslt['U1_var'])
+    rslt_['U0_var']=float(rslt['U0_var'])    
     
     #  Write out the *.json file.
     with open('grmRslt.json', 'w') as file_:
         
-        json.dump(initDict, file_)
+        json.dump(rslt_, file_)
     
 ''' Private Functions.
 '''
