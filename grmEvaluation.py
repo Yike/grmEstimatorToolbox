@@ -4,8 +4,10 @@ import json
 import grmReader
 import numpy as np
 from mpi4py import MPI
-import sys
 
+comm = MPI.COMM_WORLD
+size = comm.Get_size()
+rank = comm.Get_rank()
 
 def evaluate():
     
@@ -19,15 +21,29 @@ def evaluate():
     
     Y0_beta=para['Y0_beta']
     
+    D_gamma=para['D_gamma']
+    
     U1_var=para['U1_var']
     
     U0_var=para['U0_var']
-       
-    # get the data from the .dat file
     
+    U1V_rho=para['U1V_rho']
+    
+    U0V_rho=para['U0V_rho']
+    
+    # normalization
+    V_var=1
+    
+    # calculate the covariance between U1 and V
+    U1V_cov=U1V_rho*np.sqrt(U1_var)*np.sqrt(V_var)
+    
+    # calculate covariance between U0 and V
+    U0V_cov=U0V_rho*np.sqrt(U0_var)*np.sqrt(V_var)
+    
+    # get the data from the .dat file
     data_=_getdata()
     
-    # get numbAgents and numCovarsOut from the ini.file.
+    # get numbAgents, numCovarsOut, numCovarsCost and randomSeed from the ini.file.
     initDict = grmReader.read()
     
     numAgents = initDict['numAgents']
@@ -35,80 +51,103 @@ def evaluate():
     Y1_beta_=initDict['Y1_beta']
         
     numCovarsOut  = np.array(Y1_beta_).shape[0]
+    
+    D_gamma_=initDict['D_gamma']
+    
+    numCovarsCost = np.array(D_gamma_).shape[0]
+    
+    randomSeed=initDict['randomSeed']
+    
+    #set random seed
+    np.random.seed(randomSeed)
 
     # get the simulated X-covariates 
     
     X=data_[:,2:(numCovarsOut + 2)]
-   
-    # get the simulated decisions D
     
-    D=data_[:,1]
+    # get the simulated Z-covariates
     
-    '''calculate ATE
-    '''
-
+    Z=data_[:,-numCovarsCost:]
+    
     # calculate the level of Y_1 by using the estimated Y1_beta and simulated X
     Y1_level=np.dot(Y1_beta,X.T)
     
     # calculate the level of Y_0 by using the estimated Y0_beta and simulated X
     Y0_level=np.dot(Y0_beta,X.T)
     
-    # checks
-    assert (_checkdata(X,Y1_level,Y0_level,numAgents)==True)
+    # calculate the level of D by using the estimated D_gamma and simulated Z
+    D_level=np.dot(D_gamma,Z.T)
+    
+    # simulate the unobservables based on the estimated distributions
+    var_=[U1_var, U0_var, V_var]
+    cov=np.diag(var_)
+    cov[0,2]=U1V_cov
+    cov[2,0]=cov[0,2]
+    cov[1,2]=U0V_cov
+    cov[2,1]=cov[1,2]
+    
+    U = np.random.multivariate_normal(np.tile(0.0,3), cov, numAgents)
+    
+    U1=U[:,0]
+    U0=U[:,1]
+    V=U[:,2]
+  
+    # simulate people's decisions
+    D = np.array((Y1_level-Y0_level+U1-U0-D_level-V) > 0)
     
     # get the number of people who are treated (D=1)
     numTreated=sum(D)
     
     # get the number of people who are untreated (D=0)
     numUntreated=numAgents-numTreated
-       
-    # simulate the sum of unobservables for people who are treated if they do get treated by using parallel computing
-    sum_U1_tr=paraComp(numTreated,U1_var)
     
-    # simulate the sum of unobservables for people who are treated if they don't get treated by using parallel computing
-    sum_U0_tr=paraComp(numTreated,U0_var)
+    # checks
+    assert (_checkdata(X,Y1_level,Y0_level,numAgents)==True)
     
-    # simulate the sum of unobservables for people who are untreated if they do get treated by using parallel computing 
-    sum_U1_utr=paraComp(numUntreated,U1_var)
-    
-    # simulate the sum of unobservables for people who are untreated if they don't get treated by using parallel computing
-    sum_U0_utr=paraComp(numUntreated,U0_var)
-
-    
-    # calculate ATE
-    ATE = (sum(Y1_level)-sum(Y0_level)+sum_U1_tr+sum_U1_utr-sum_U0_tr-sum_U0_utr)/numAgents
-    print "ATE = %s" % ATE
+    '''calculate ATE
+    '''
+    ATE = (sum(Y1_level)-sum(Y0_level)+sum(U1)-sum(U0))/numAgents
     
     '''calculate ATT
     '''
-    
     # create an index indicating people who are treated (D=1)
     index_tr=np.where(D==1)[0]
     
     # get the X-covariates for people who are treated (D=1)
     X_tr=X[index_tr,:]
     
+    # get U1 for people who are treated (D=1)
+    U1_tr=U1[index_tr,:]
+    
+    # get U0 for people who are treated (D=1)
+    U0_tr=U0[index_tr,:]
+    
     # calculate the level of Y_1 for the treated agents (D=1)
     Y1_level_tr=np.dot(Y1_beta,X_tr.T)
     
-    # calculate the level of Y_1 for the treated agents (D=1)
+    # calculate the level of Y_0 for the treated agents (D=1)
     Y0_level_tr=np.dot(Y0_beta,X_tr.T)
     
     # checks
     assert (_checkdata(X_tr,Y1_level_tr,Y0_level_tr,numTreated)==True)
     
-    # calculate ATE
-    ATT = (sum(Y1_level_tr)-sum(Y0_level_tr)+sum_U1_tr-sum_U0_tr)/numTreated
-    print "ATT = %s" % ATT
+    # calculate ATT
+    ATT = (sum(Y1_level_tr)-sum(Y0_level_tr)+sum(U1_tr)-sum(U0_tr))/numTreated
+
     
     ''' calculate ATU
     '''
-
     # create an index indicating people who are untreated (D=0)
     index_utr=np.where(D==0)[0]
     
     # get the X-covariates for people who are untreated (D=0)
     X_utr=X[index_utr,:]
+    
+    # get U1 for people who are untreated (D=0)
+    U1_utr=U1[index_utr,:]
+    
+    # get U0 for people who are untreated (D=0)
+    U0_utr=U0[index_utr,:]
     
     # calculate the level of Y_1 for the untreated agents (D=0)
     Y1_level_utr=np.dot(Y1_beta,X_utr.T)
@@ -120,10 +159,19 @@ def evaluate():
     assert (_checkdata(X_utr,Y1_level_utr,Y0_level_utr,numUntreated)==True)
    
     # calculate ATU
-    ATU = (sum(Y1_level_utr)-sum(Y0_level_utr)+sum_U1_utr-sum_U0_utr)/numUntreated
-    print "ATU = %s" % ATU
+    ATU = (sum(Y1_level_utr)-sum(Y0_level_utr)+sum(U1_utr)-sum(U0_utr))/numUntreated
+
+    #MPI
+    TreatmentEffects = np.array(comm.gather([ATE,ATT,ATU,numAgents,numTreated,numUntreated],root=0))
+    if rank==0:
+        ATE  = (sum(TreatmentEffects[:,0]) * sum(TreatmentEffects[:,3])) / sum(TreatmentEffects[:,3])
+        ATT  = (sum(TreatmentEffects[:,1]) * sum(TreatmentEffects[:,4])) / sum(TreatmentEffects[:,4])
+        ATU  = (sum(TreatmentEffects[:,2]) * sum(TreatmentEffects[:,5])) / sum(TreatmentEffects[:,5])
         
-    return 
+        print "ATE = %s" % ATE
+        print "ATT = %s" % ATT
+        print "ATU = %s" % ATU
+    
 
 def _getpara():
     '''read the .json file and export the saved dictionary
@@ -176,28 +224,15 @@ def _checkdata(X,Y1_level,Y0_level,numAgents):
     
     return True
 
-def paraComp(N,Var):
-    #print type(N)
-    #print type(Var)
-    parent_comm = MPI.COMM_SELF.Spawn(sys.executable,
-                               args=['grmworker.py'],
-                               maxprocs=4)
-    
-    N=np.array(N,'i')
-    parent_comm.Bcast([N, MPI.INT], root=MPI.ROOT)
-    
-    Var=np.array(Var,'d')
-    parent_comm.Bcast([Var, MPI.DOUBLE], root=MPI.ROOT)
-    
-    draws_sum = np.array(0.0)
-    parent_comm.Reduce(None, [draws_sum, MPI.DOUBLE],
-                op=MPI.SUM, root=MPI.ROOT)
-    
-    parent_comm.Disconnect()
-    return draws_sum
-
 ''' Executable.
 '''
 if __name__ == '__main__':
     
     evaluate()
+    
+    
+   
+    
+    
+
+    
