@@ -162,15 +162,18 @@ def evaluate():
     ATU = (sum(Y1_level_utr)-sum(Y0_level_utr)+sum(U1_utr)-sum(U0_utr))/numUntreated
 
     #MPI
-    TreatmentEffects = np.array(comm.gather([ATE,ATT,ATU,numAgents,numTreated,numUntreated],root=0))
+    TreatmentEffects = np.array(comm.gather([ATE,ATT,ATU],root=0))
     if rank==0:
-        ATE  = (sum(TreatmentEffects[:,0]) * sum(TreatmentEffects[:,3])) / sum(TreatmentEffects[:,3])
-        ATT  = (sum(TreatmentEffects[:,1]) * sum(TreatmentEffects[:,4])) / sum(TreatmentEffects[:,4])
-        ATU  = (sum(TreatmentEffects[:,2]) * sum(TreatmentEffects[:,5])) / sum(TreatmentEffects[:,5])
         
-        print "ATE = %s" % ATE
-        print "ATT = %s" % ATT
-        print "ATU = %s" % ATU
+        TreatmentEffects = np.mean(TreatmentEffects, axis=0)
+        Treatments={}
+        Treatments['ATE']  = TreatmentEffects[0]
+        Treatments['ATT']  = TreatmentEffects[1]
+        Treatments['ATU']= TreatmentEffects[2]
+        
+        print "ATE = %s" % Treatments['ATE']
+        print "ATT = %s" % Treatments['ATT']
+        print "ATU = %s" % Treatments['ATU']
     
 
 def _getpara():
@@ -229,10 +232,4 @@ def _checkdata(X,Y1_level,Y0_level,numAgents):
 if __name__ == '__main__':
     
     evaluate()
-    
-    
-   
-    
-    
-
     
